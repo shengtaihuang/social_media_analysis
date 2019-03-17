@@ -1,0 +1,274 @@
+---
+title: "第九組：結合jiebar與Tidy text套件，處理中文文字資料（三國演義）"
+author: "第九組"
+date: "2019/03/17"
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+abstract: 結合jiebar與Tidy text套件，處理中文文字資料（三國演義）
+---
+# 系統參數設定
+```{r}
+Sys.setlocale(category = "LC_ALL", locale = "zh_TW.UTF-8") # 避免中文亂碼
+```
+
+## 安裝需要的packages
+```{r}
+packages = c("dplyr", "tidytext", "jiebaR", "gutenbergr", "stringr", "wordcloud2", "ggplot2", "tidyr", "scales")
+existing = as.character(installed.packages()[,1])
+for(pkg in packages[!(packages %in% existing)]) install.packages(pkg)
+```
+
+```{r echo = T, results = 'hide'}
+require(dplyr)
+require(tidytext)
+require(jiebaR)
+require(gutenbergr)
+library(stringr)
+library(wordcloud2)
+library(ggplot2)
+library(tidyr)
+library(scales)
+require(caTools)
+require(knitr)
+```
+#書籍下載
+
+* 從 gutenberg 下載 id 為 23950 的【三國演義】書籍
+* 整理書籍成一列一句的資料格式
+
+```{r}
+# 下載 "三國演義" 書籍，並且將text欄位為空的行給清除，以及將重複的語句清除
+
+red_org <- gutenberg_download(23950) %>% filter(text!="") %>% distinct(gutenberg_id, text)
+
+
+doc = paste0(red_org$text,collapse = "") #將text欄位的全部文字合併
+docVector = unlist(strsplit(doc,"[。．]"), use.names=FALSE) #以全形或半形句號斷句
+red = data.frame(gutenberg_id = "23950" , text = docVector,stringsAsFactors = FALSE) #gutenberg_id換成自己的書本id
+
+```
+
+## 章節與關鍵字尋找
+
+* 三國演義中每章的開始會有"第XXX回："為標題
+* 關鍵字字句尋找
+  + 劉備  ：【劉備】、【玄德】
+  + 關羽  ：【雲長】、【關羽】、【關公】  
+  + 張飛  ：【張飛】、【翼德】、【張翼德】
+  + 諸葛亮：【諸葛亮】、【孔明】
+  + 曹操  ：【曹操】、【丞相】
+  + 魏國  ：【魏兵】
+  + 蜀國  ：【蜀兵】
+  + 吳國  ：【吳兵】
+
+```{r}
+# 根據上方整理出來的規則，我們可以使用正規表示式，將句子區分章節
+red <- red %>% 
+  mutate(chapter = cumsum(str_detect(red$text, regex("第.*回："))),
+         liu_bei=(str_detect(red$text, regex("劉備|玄德"))),
+         cao_cao=(str_detect(red$text, regex("曹操|丞相"))),
+         guan_yu=(str_detect(red$text, regex("雲長|關公|關羽"))),
+         yi_de=(str_detect(red$text, regex("張翼德|翼德|張飛"))),
+         kong_ming=(str_detect(red$text, regex("孔明|諸葛亮"))),
+         wei_guo=str_detect(red$text, regex("魏兵")),
+         shu_guo=str_detect(red$text, regex("蜀兵")),
+         wu_guo=str_detect(red$text, regex("吳兵"))
+         )
+```
+
+* 計算三國演義每一回，各國兵句子出現頻率
+* 使用移動平均使圖形更為平滑
+
+
+```{r fig.width=8*4/3, fig.height=8}
+# 根據上方整理出來的規則，我們可以使用正規表示式，將句子區分章節
+red_group <- red %>% select(-gutenberg_id,-text) %>% select(chapter,wei_guo,shu_guo,wu_guo) %>% 
+  group_by(chapter) %>% summarise_all(mean)
+
+red_group2 <- red_group %>% gather(word,prop,-chapter) %>% group_by(word) %>% mutate(prop_runmean=runmean(prop,k=3))
+
+red_group2 %>% ggplot(aes(x = chapter, y=(prop_runmean), fill="type", color=factor(word))) +
+  geom_line(size=1) + 
+  scale_colour_discrete(name = "人物",breaks=c("wei_guo", "shu_guo", "wu_guo"),labels =c("魏兵","蜀兵","吳兵"))+ylab("各回字句出現頻率+移動平均平滑3")+xlab("章節")
+
+```
+
+* 同樣計算三國演義每一回，人物在句子出現頻率
+* 使用移動平均使圖形更為平滑
+
+```{r fig.width=8*4/3, fig.height=8}
+# 根據上方整理出來的規則，我們可以使用正規表示式，將句子區分章節
+red_group <- red %>% select(-gutenberg_id,-text) %>% select(-wei_guo,-shu_guo,-wu_guo,) %>% 
+  group_by(chapter) %>% summarise_all(mean)
+
+red_group2 <- red_group %>% gather(word,prop,-chapter) %>% group_by(word) %>% mutate(prop_runmean=runmean(prop,k=3))
+
+red_group2 %>% ggplot(aes(x = chapter, y=(prop_runmean), fill="type", color=factor(word))) +
+  geom_line(size=1) + 
+  scale_colour_discrete(name = "人物",breaks=c("liu_bei", "guan_yu", "yi_de","kong_ming","cao_cao"),labels =c("劉備","關羽","張飛","諸葛亮","曹操"))+ylab("各回字句出現頻率+移動平均平滑3")+xlab("章節")
+
+```
+     
+
+
+
+
+## 中文斷詞
+
+* 將三國演義詞典【san_guo.scel_2019-03-16_17_23_08_trad.dict】納入建立 R jieba worker 
+* 進行斷詞
+
+```{r}
+# 使用三國演義專有名詞字典
+jieba_tokenizer <- worker(user = 'san_guo.scel_2019-03-16_17_23_08_trad.dict', stop_word = "stop_words.txt")
+# 設定斷詞function
+red_tokenizer <- function(t) {
+  lapply(t, function(x) {
+    tokens <- segment(x, jieba_tokenizer)
+    return(tokens)
+  })
+}
+
+tokens <- red %>% unnest_tokens(word, text, token=red_tokenizer)
+
+```
+
+## 計算詞頻
+* 只保留字數大於 1 與詞頻大於 10 的字
+* 列出詞頻前 20 大的字
+
+```{r}
+# 計算詞彙的出現次數，如果詞彙只有一個字則不列入計算
+tokens_count <- tokens %>% 
+  filter(nchar(.$word)>1) %>%
+  group_by(word) %>% 
+  summarise(sum = n()) %>% 
+  filter(sum>10) %>%
+  arrange(desc(sum))
+
+# 印出最常見的20個詞彙
+head(tokens_count, 20) %>% kable
+```
+
+# 文字雲
+畫出詞頻的文字雲
+```{r}
+tokens_count2=tokens_count %>% mutate(sum=(sum)^1 %>% as.integer())
+tokens_count2%>% wordcloud2()
+```
+
+# 各章節長度，以語句數來計算
+```{r}
+plot <- 
+  bind_rows(
+    red %>% 
+      group_by(chapter) %>% 
+      summarise(count = n(), type="sentences"),
+    tokens %>% 
+      group_by(chapter) %>% 
+      summarise(count = n(), type="words")) %>% 
+  group_by(type)%>%
+  ggplot(aes(x = chapter, y=count, fill="type", color=factor(type))) +
+  geom_line() + 
+  ggtitle("各章節的句子總數") + 
+  xlab("章節") + 
+  ylab("句子數量") #+ 
+  #theme(text = element_text(family = "Heiti TC Light"))
+plot
+```
+
+# 書籍撰寫前 80 回於後 40 回字頻差異
+* 由人物頻率圖可觀測出 80 為一個分界點
+* 計算前八十回  和 後四十回 的詞彙在全文中出現比率
+
+```{r}
+frequency <- tokens %>% mutate(part = ifelse(chapter<=80, "First 80", "Last 40")) %>%
+  filter(nchar(.$word)>1) %>%
+  mutate(word = str_extract(word, "[^0-9a-z']+")) %>%
+  mutate(word = str_extract(word, "^[^一二三四五六七八九十]+")) %>%
+  count(part, word)%>%
+  group_by(part) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(part, proportion) %>% 
+  gather(part, proportion, `Last 40`) 
+frequency[is.na(frequency)]=min(frequency %>% select(`First 80`,proportion))
+```
+
+* 將前八十回  和 後二十回 的詞彙在全文中出現比率以圖呈現
+
+```{r fig.width=8*4/3, fig.height=8}
+ggplot(frequency, aes(x = proportion, y = `First 80`, color = abs(`First 80` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  #geom_jitter(alpha = 0.01, size = 2.5, width = 0.01, height = 0.01) +
+  #geom_point() +
+  geom_text(aes(label = word), vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "First 80", x = "Last 40")
+```
+
+
+
+
+------
+
+# 額外補充
+> 使用搜狗詞彙庫<br>
+搜狗輸入法是中國主流的拼音輸入法，在中國的市佔率高達50%。<br>
+並且，其官網提供了眾多專有詞彙的詞彙庫供使用者免費下載。<br>
+詳情可以參考一下連結：<br>
+https://pinyin.sogou.com/dict/
+
+```{r}
+# 安裝packages
+packages = c("readr", "devtools", "stringi", "pbapply", "Rcpp", "RcppProgress")
+existing = as.character(installed.packages()[,1])
+for(pkg in packages[!(packages %in% existing)]) install.packages(pkg)
+```
+
+
+```{r}
+# 載入library
+library(readr)
+library(devtools)
+
+# 解碼scel用
+#install_github("qinwf/cidian")
+library(cidian)
+# 簡體轉繁體套件
+#install_github("qinwf/ropencc")
+library(ropencc)
+```
+
+
+```{r}
+# 解碼scel檔案
+decode_scel(scel = "./san_guo.scel",cpp = TRUE)
+```
+
+```{r}
+# 讀取解碼後生成的詞庫檔案
+scan(file="./san_guo.scel_2019-03-16_17_23_08.dict",
+      what=character(),nlines=50,sep='\n',
+      encoding='utf-8',fileEncoding='utf-8')
+```
+
+```{r}
+dict <- read_file("./san_guo.scel_2019-03-16_17_23_08.dict")
+# 將簡體詞庫轉為繁體
+cc <- converter(S2TW)
+dict_trad <- cc[dict]
+write_file(dict_trad, "./san_guo.scel_2019-03-16_17_23_08_trad.dict")
+```
+
+```{r}
+# 讀取轉換成繁體後的詞庫檔案
+scan(file="./san_guo.scel_2019-03-16_17_23_08_trad.dict",
+      what=character(),nlines=50,sep='\n',
+      encoding='utf-8',fileEncoding='utf-8')
+```
