@@ -1,7 +1,7 @@
 ---
 title: "第九組：結合jiebar與Tidy text套件，處理中文文字資料（三國演義）"
 author: "第九組"
-date: "2019/03/17"
+date: "2019/03/19"
 output:
   html_document: default
   html_notebook: default
@@ -49,6 +49,15 @@ docVector = unlist(strsplit(doc,"[。．]"), use.names=FALSE) #以全形或半�
 red = data.frame(gutenberg_id = "23950" , text = docVector,stringsAsFactors = FALSE) #gutenberg_id換成自己的書本id
 
 ```
+## 三國演義大綱
+```{r}
+history_tmp=read.csv("三國演義歷史.csv",header=FALSE,stringsAsFactors=FALSE)
+my_str_split<-function(x,i) lapply(strsplit(x,split="~"),function(y) y[i]) %>% unlist %>% as.numeric()
+#history_tmp$V1[9]="長坂坡"
+history_tmp2=history_tmp %>% mutate(start=my_str_split(V2,1),end=my_str_split(V2,2)) %>% select(-V2);
+colnames(history_tmp2)[1]="大綱"
+history_tmp2 %>% kable
+```
 
 ## 章節與關鍵字尋找
 
@@ -58,7 +67,7 @@ red = data.frame(gutenberg_id = "23950" , text = docVector,stringsAsFactors = FA
   + 關羽  ：【雲長】、【關羽】、【關公】  
   + 張飛  ：【張飛】、【翼德】、【張翼德】
   + 諸葛亮：【諸葛亮】、【孔明】
-  + 曹操  ：【曹操】、【丞相】
+  + 曹操  ：【曹操】、【阿瞞】、【孟德】
   + 魏國  ：【魏兵】
   + 蜀國  ：【蜀兵】
   + 吳國  ：【吳兵】
@@ -66,48 +75,60 @@ red = data.frame(gutenberg_id = "23950" , text = docVector,stringsAsFactors = FA
 ```{r}
 # 根據上方整理出來的規則，我們可以使用正規表示式，將句子區分章節
 red <- red %>% 
-  mutate(chapter = cumsum(str_detect(red$text, regex("第.*回："))),
-         liu_bei=(str_detect(red$text, regex("劉備|玄德"))),
-         cao_cao=(str_detect(red$text, regex("曹操|丞相"))),
-         guan_yu=(str_detect(red$text, regex("雲長|關公|關羽"))),
-         yi_de=(str_detect(red$text, regex("張翼德|翼德|張飛"))),
-         kong_ming=(str_detect(red$text, regex("孔明|諸葛亮"))),
-         wei_guo=str_detect(red$text, regex("魏兵")),
-         shu_guo=str_detect(red$text, regex("蜀兵")),
-         wu_guo=str_detect(red$text, regex("吳兵"))
-         )
+  mutate(chapter = cumsum(str_detect(text, regex("第.*回："))),
+         chapter_ind = (str_detect(text, regex("第.*回："))),
+         liu_bei=(str_detect(text, regex("劉備|玄德"))),
+         cao_cao=(str_detect(text, regex("曹操|阿瞞|孟德"))),
+         guan_yu=(str_detect(text, regex("雲長|關公|關羽"))),
+         yi_de=(str_detect(text, regex("張翼德|翼德|張飛"))),
+         kong_ming=(str_detect(text, regex("孔明|諸葛亮"))),
+         wei_guo=str_detect(text, regex("魏兵")),
+         shu_guo=str_detect(text, regex("蜀兵")),
+         wu_guo=str_detect(text, regex("吳兵"))
+         ) %>% 
+    mutate(chapter_content=ifelse(chapter_ind,gsub(".*第.*回：(.*)(　　).*", "\\1", text),""))
+red_chapter=red %>% filter(chapter_ind) %>% select(chapter,chapter_content);
+#   mutate(chapter_content=ifelse(chapter_ind,gsub("(　　).*","", text),""))
+# red_chapter=red %>% filter(chapter_ind) %>% select(chapter,chapter_content);
 ```
 
 * 計算三國演義每一回，各國兵句子出現頻率
-* 使用移動平均使圖形更為平滑
-
+* 將最高點的章節名稱放入
 
 ```{r fig.width=8*4/3, fig.height=8}
 # 根據上方整理出來的規則，我們可以使用正規表示式，將句子區分章節
-red_group <- red %>% select(-gutenberg_id,-text) %>% select(chapter,wei_guo,shu_guo,wu_guo) %>% 
+red_group <- red %>% select(-gutenberg_id,-text,-chapter_content,-chapter_ind) %>% select(chapter,wei_guo,shu_guo,wu_guo) %>% 
   group_by(chapter) %>% summarise_all(mean)
 
-red_group2 <- red_group %>% gather(word,prop,-chapter) %>% group_by(word) %>% mutate(prop_runmean=runmean(prop,k=3))
+red_group2 <- red_group %>% gather(word,prop,-chapter) %>% group_by(word) %>% 
+  mutate(prop_runmean=runmean(prop,k=3)) %>% left_join(red_chapter,by="chapter") %>% 
+  mutate(chapter_show=ifelse(prop==max(prop),chapter_content,""))
 
-red_group2 %>% ggplot(aes(x = chapter, y=(prop_runmean), fill="type", color=factor(word))) +
+red_group2 %>% ggplot(aes(x = chapter, y=(prop), fill="type", color=factor(word))) +
   geom_line(size=1) + 
-  scale_colour_discrete(name = "人物",breaks=c("wei_guo", "shu_guo", "wu_guo"),labels =c("魏兵","蜀兵","吳兵"))+ylab("各回字句出現頻率+移動平均平滑3")+xlab("章節")
+  scale_colour_discrete(name = "人物",breaks=c("wei_guo", "shu_guo", "wu_guo"),labels =c("魏兵","蜀兵","吳兵"))+ylab("各回字句出現頻率")+xlab("章節")+
+  geom_text(aes(label = chapter_show), vjust = 0.02,hjust=1,fontface="bold")
 
 ```
 
 * 同樣計算三國演義每一回，人物在句子出現頻率
-* 使用移動平均使圖形更為平滑
+* 將最高點的章節名稱放入
 
 ```{r fig.width=8*4/3, fig.height=8}
 # 根據上方整理出來的規則，我們可以使用正規表示式，將句子區分章節
-red_group <- red %>% select(-gutenberg_id,-text) %>% select(-wei_guo,-shu_guo,-wu_guo,) %>% 
+red_group <- red %>% select(-gutenberg_id,-text,-chapter_content,-chapter_ind) %>% select(-wei_guo,-shu_guo,-wu_guo) %>% 
   group_by(chapter) %>% summarise_all(mean)
 
-red_group2 <- red_group %>% gather(word,prop,-chapter) %>% group_by(word) %>% mutate(prop_runmean=runmean(prop,k=3))
+red_group2 <- red_group %>% gather(word,prop,-chapter) %>% group_by(word) %>% mutate(prop_runmean=runmean(prop,k=3))%>% left_join(red_chapter,by="chapter") %>% 
+  mutate(chapter_show=ifelse(prop>=max(prop),chapter_content,""))
 
-red_group2 %>% ggplot(aes(x = chapter, y=(prop_runmean), fill="type", color=factor(word))) +
+red_group2$chapter_show[red_group2$word=="yi_de"]=""
+red_group2$chapter_show[red_group2$word=="cao_cao"]=""
+
+red_group2 %>% ggplot(aes(x = chapter, y=(prop), fill="type", color=factor(word))) +
   geom_line(size=1) + 
-  scale_colour_discrete(name = "人物",breaks=c("liu_bei", "guan_yu", "yi_de","kong_ming","cao_cao"),labels =c("劉備","關羽","張飛","諸葛亮","曹操"))+ylab("各回字句出現頻率+移動平均平滑3")+xlab("章節")
+  scale_colour_discrete(name = "人物",breaks=c("liu_bei", "guan_yu", "yi_de","kong_ming","cao_cao"),labels =c("劉備","關羽","張飛","諸葛亮","曹操"))+ylab("各回字句出現頻率")+xlab("章節")+
+  geom_text(aes(label = chapter_show), vjust = 0.02,hjust=0.5,fontface="bold",size=5)
 
 ```
      
