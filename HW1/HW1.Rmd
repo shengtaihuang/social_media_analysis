@@ -51,7 +51,7 @@ red = data.frame(gutenberg_id = "23950" , text = docVector,stringsAsFactors = FA
 ```
 ## 三國演義大綱
 ```{r}
-history_tmp=read.csv("三國演義歷史.csv",header=FALSE,stringsAsFactors=FALSE)
+history_tmp=read.csv("三國演義歷史.csv",header=FALSE,stringsAsFactors=FALSE,fileEncoding="big5")
 my_str_split<-function(x,i) lapply(strsplit(x,split="~"),function(y) y[i]) %>% unlist %>% as.numeric()
 #history_tmp$V1[9]="長坂坡"
 history_tmp2=history_tmp %>% mutate(start=my_str_split(V2,1),end=my_str_split(V2,2)) %>% select(-V2);
@@ -93,6 +93,7 @@ red_chapter=red %>% filter(chapter_ind) %>% select(chapter,chapter_content);
 ```
 
 * 計算三國演義每一回，各國兵句子出現頻率
+* 由該圖能簡單看出三國的創立和交戰火熱情況
 * 將最高點的章節名稱放入
 
 ```{r fig.width=8*4/3, fig.height=8}
@@ -100,8 +101,7 @@ red_chapter=red %>% filter(chapter_ind) %>% select(chapter,chapter_content);
 red_group <- red %>% select(-gutenberg_id,-text,-chapter_content,-chapter_ind) %>% select(chapter,wei_guo,shu_guo,wu_guo) %>% 
   group_by(chapter) %>% summarise_all(mean)
 
-red_group2 <- red_group %>% gather(word,prop,-chapter) %>% group_by(word) %>% 
-  mutate(prop_runmean=runmean(prop,k=3)) %>% left_join(red_chapter,by="chapter") %>% 
+red_group2 <- red_group %>% gather(word,prop,-chapter) %>% group_by(word)%>% left_join(red_chapter,by="chapter") %>% 
   mutate(chapter_show=ifelse(prop==max(prop),chapter_content,""))
 
 red_group2 %>% ggplot(aes(x = chapter, y=(prop), fill="type", color=factor(word))) +
@@ -112,6 +112,11 @@ red_group2 %>% ggplot(aes(x = chapter, y=(prop), fill="type", color=factor(word)
 ```
 
 * 同樣計算三國演義每一回，人物在句子出現頻率
+* 由該圖能看出作者描述各人物的情況
+   + 劉備各回的描述較多,並且部分最高的其中一回 0.4 的句子都有劉備參與 (人物飽滿 )
+   + 描述關羽的回數相比於劉備較少，但在最高回有 0.45 的句子都有關羽參與 (人物飽滿 )
+   + 孔明的描述主要在七擒孟獲和與司馬懿交戰才大量提升
+   + 張飛描述相對其他人較少
 * 將最高點的章節名稱放入
 
 ```{r fig.width=8*4/3, fig.height=8}
@@ -119,7 +124,7 @@ red_group2 %>% ggplot(aes(x = chapter, y=(prop), fill="type", color=factor(word)
 red_group <- red %>% select(-gutenberg_id,-text,-chapter_content,-chapter_ind) %>% select(-wei_guo,-shu_guo,-wu_guo) %>% 
   group_by(chapter) %>% summarise_all(mean)
 
-red_group2 <- red_group %>% gather(word,prop,-chapter) %>% group_by(word) %>% mutate(prop_runmean=runmean(prop,k=3))%>% left_join(red_chapter,by="chapter") %>% 
+red_group2 <- red_group %>% gather(word,prop,-chapter) %>% group_by(word)%>% left_join(red_chapter,by="chapter") %>% 
   mutate(chapter_show=ifelse(prop>=max(prop),chapter_content,""))
 
 red_group2$chapter_show[red_group2$word=="yi_de"]=""
@@ -219,6 +224,10 @@ frequency[is.na(frequency)]=min(frequency %>% select(`First 80`,proportion))
 ```
 
 * 將前八十回  和 後二十回 的詞彙在全文中出現比率以圖呈現
+* 由圖可簡單看出
+   + 左半邊人物是早期出現人物
+   + 右半邊人物是後期出現人物
+   + 其中較為特別的是劉備可能在後 80 回稱呼被【先主】取代
 
 ```{r fig.width=8*4/3, fig.height=8}
 ggplot(frequency, aes(x = proportion, y = `First 80`, color = abs(`First 80` - proportion))) +
