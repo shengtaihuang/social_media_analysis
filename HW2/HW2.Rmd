@@ -1,0 +1,347 @@
+---
+title: "第九組：結合jiebar與Tidy text套件，處理中文文字資料（Treasure Island）"
+author: "第九組"
+date: "2019/04/01"
+output:
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+abstract: 情緒分析 Treasure Island
+---
+# 系統參數設定
+```{r}
+Sys.setlocale(category = "LC_ALL", locale = "zh_TW.UTF-8") # 避免中文亂碼
+```
+
+## 安裝需要的packages
+```{r echo = T, results = 'hide'}
+packages = c("dplyr", "tidytext", "jiebaR", "gutenbergr", "stringr", "wordcloud2", "ggplot2", "tidyr", "scales")
+existing = as.character(installed.packages()[,1])
+for(pkg in packages[!(packages %in% existing)]) install.packages(pkg)
+```
+
+```{r echo = T, results = 'hide'}
+require(dplyr)
+require(tidytext)
+require(jiebaR)
+require(gutenbergr)
+library(stringr)
+library(wordcloud2)
+library(ggplot2)
+library(tidyr)
+library(scales)
+require(caTools)
+require(knitr)
+library(wordcloud2)
+library(ggplot2)
+library(scales)
+library(rtweet)
+library(dplyr)
+library(xml2)
+library(httr)
+library(jsonlite)
+library(magrittr)
+library(data.tree)
+library(tidytext)
+library(stringr)
+
+clean = function(txt) {
+  txt = iconv(txt, "latin1", "ASCII", sub="") #轉換編碼
+  txt = gsub("(@|#)\\w+", "", txt) #去除@或#後有數字,字母,底線 (標記人名或hashtag)
+  txt = gsub("(http|https)://.*", "", txt) #去除網址
+  txt = gsub("[\t]{2,}", "", txt) #去除兩個以上的tab
+  txt = gsub("\\n"," ",txt) #去除換行
+  txt = gsub("&.*;","",txt) #去除html特殊字元編碼
+  
+  #最後再整理空格
+  txt = gsub("\\s+"," ",txt) #去除一個以上的空格
+  txt = gsub("^\\s+|\\s+$","",txt) #去除前後一個以上的空格
+  
+  #只留下我們想看的字元
+  txt = gsub("[^a-zA-Z0-9?!.;\" ']","",txt) #除了字母,數字 ?!.' ,空白的都去掉
+  txt=gsub("(Mr|Dr|Miss|Ms|Mstr|Rs|Dr)\\.","",txt)
+
+  txt } 
+```
+#書籍下載
+
+* 從 gutenberg 下載 id 為 120 的【Treasure Island】書籍
+* 整理書籍成一列一句的資料格式
+
+```{r}
+# 下載 "Treasure Island" 書籍，並且將text欄位為空的行給清除，以及將重複的語句清除 338
+red_org <- gutenberg_download(120) %>% filter(text!="") %>% distinct(gutenberg_id, text) %>% 
+  mutate(linenumber = row_number(),chapter = cumsum(str_detect(text, regex("^[0-9]+$",ignore_case = TRUE))),
+         chapter_ind = str_detect(text, regex("^[0-9]+$",ignore_case = TRUE)) | 
+           lag(str_detect(text, regex("^[0-9]+$",ignore_case = TRUE))))
+
+
+# 因為 "Treasure Island" 這本書，若直接合併，章節較難尋找，所以這裡的 code 比較迂迴一點
+title_data=red_org %>% filter(chapter_ind) %>% select(text) %>% as.matrix() %>%  matrix(byrow = T,ncol = 2) %>% data.frame() 
+colnames(title_data)=c("chapter","chapter_name")
+
+red_org2<- red_org %>% filter(!chapter_ind & chapter!=0)
+split_red_org2=split(red_org2,red_org2$chapter);
+
+n=length(split_red_org2)
+red=lapply(1:n, function(i){
+  tmp_red_org=split_red_org2[[i]];
+  doc = paste0(tmp_red_org$text,collapse = " ") %>% clean() 
+  #利用 '. ','? '和'! '分成不同句子  
+  docVector = unlist(strsplit(doc,"\\. |\\? |\\! "), use.names=FALSE)
+  red_tmp = data.frame(gutenberg_id = "120" , text = docVector,chapter=i,stringsAsFactors = FALSE) %>% filter(text!="" & text!=" ")
+  return(red_tmp)
+}) %>% do.call(what = "rbind")%>%
+  mutate(linenumber = row_number());
+
+```
+
+#情緒分析
+
+## Afinn, bing 和 NRC 情緒計算 
+
+* 使用 "Afinn"、"bing" 和 "NRC" 情緒辭典分別計算每句的情緒
+* Afinn 直接進行相加
+* "bing" 和 "NRC" 是使用 'positive' 個數想減 'negetive' 個數
+
+```{r}
+#斷詞
+red2=red%>%
+  unnest_tokens(word, text)
+
+#計算 "AFinn" 情緒值
+afinn <- red2 %>% 
+  left_join(get_sentiments("afinn")) %>% 
+  group_by(index = linenumber) %>% 
+  summarise(sentiment = sum(score,na.rm = T)) %>% 
+  mutate(method = "AFINN")
+
+#計算"bing" 和 "NRC"情緒值
+bing_and_nrc <- bind_rows(red2 %>% 
+                            left_join(get_sentiments("bing")) %>%
+                            mutate(method = "Bing et al."),
+                          red2 %>% 
+                            left_join(get_sentiments("nrc") %>% 
+                                         filter(sentiment %in% c("positive", 
+                                                                 "negative"))) %>%
+                            mutate(method = "NRC"))%>%
+  count(method, index = linenumber, sentiment)%>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)%>% select(index,sentiment,method)
+
+
+red3=bind_rows(afinn,
+          bing_and_nrc)  %>% spread(method,sentiment) %>% select(index,AFINN,`Bing et al.`,NRC)
+
+```
+
+
+
+## 使用CoreNLP 計算情緒
+
+
+### API呼叫的設定
+
+server端 :
++ 需先在terminal開啟corenlp server
++ 在corenlp的路徑下開啟terminal輸入 `java -mx4g -cp "*" edu.stanford.nlp.pipeline.StanfordCoreNLPServer -port 9000 -timeout 15000`
+
+```{r}
+# 生產core-nlp的api url，可以設定斷詞依據、以及要標註的任務
+generate_API_url <- function(host, port="9000",
+                             tokenize.whitespace="false", annotators=""){ #斷詞依據不是空格
+  url <- sprintf('http://%s:%s/?properties={"tokenize.whitespace":"%s","annotators":"%s"}',
+                 host, port, tokenize.whitespace, annotators)
+  url <- URLencode(url)
+}
+generate_API_url("127.0.0.1")
+
+host = "127.0.0.1"
+source("sentiment_function.R")
+```
+
+
+
+
+
+### coreNLP 服務分析句子
+
+#### 將句子丟入服務
+
+取得coreNLP回傳的物件<br>
+先不要跑這段，會花大概18分鐘（如果你記憶體只有4G可能會當掉...）
+
+```{r}
+load("coreNLP_HW_0330_all_120.RData")
+# gc() #釋放不使用的記憶體
+# 
+# t0 = Sys.time()
+# #all
+# obj = red[,c(3,4,2)]  %>% filter(text != "") %>% coreNLP(host)
+# 
+# 
+# #先過濾掉沒有內容的的tweet
+# #丟入coreNLP的物件 必須符合: 是一個data.frame 且有一個text欄位
+# 
+# Sys.time() - t0 #執行時間
+# #Time difference of 17.89611 mins
+# 
+# save.image("coreNLP_HW_0330_all_120.RData")
+```
+
+* 利用 coreNLP 計算句子情緒
+* 與 "AFinn"、"bing" 和 "NRC" 的情緒值合併
+* 將情緒值轉換成 -1,0,1 負面，無情緒與正面，並計算重疊率
+* 
+
+```{r}
+char2num<-function(x){
+  x %>% as.character %>% as.numeric()
+}
+sentiment = coreNLP_sentiment_parser(obj)
+sentiment=sentiment %>% mutate(linenumber=char2num(linenumber),chapter=char2num(chapter),sentimentValue=(char2num(sentimentValue)-2))
+
+red8=red3 %>% left_join(sentiment,c("index"="linenumber"))
+
+#將情緒值轉換成 -1,0,1 
+red8_sign=red8 %>% select(AFINN,`Bing et al.`,NRC,sentimentValue) %>% mutate_all(sign)
+#計算重疊率
+sapply(red8_sign, function(x) sapply(red8_sign, function(y) mean(x==y))) %>% print
+#
+
+```
+
+* 從上表可得出 "bing" 和 "corenlp" 情緒結果較為相近
+* 將 "bing" 和 "corenlp" 正負面的對應表以比例輸出
+```{r}
+tmp=(table(red8_sign$sentimentValue,red8_sign$`Bing et al.`)/nrow(red8_sign)) 
+rownames(tmp)=paste("corenlp",c("負","中","正"))
+colnames(tmp)=paste("bing",c("負","中","正"))
+tmp
+```
+
+* 從結果可以知道大部分不合理資料集中在當 "corenlp" 為負面和 "bing" 為正面時
+* 故將部部分不一致的結果進行輸出
+
+```{r}
+red_tmp=red8 %>% filter(sign(sentimentValue)==-1,sign(`Bing et al.`)==1)
+red_tmp %>% head(10) %>% kable
+```
+
+
+
+* 從上表能看出該該小說的句子字數都較長
+* 故想探討字數與情緒的關係
+* 從 anova 可得出不同情緒的字數是有顯著差異
+```{r}
+red_len=red8 %>% mutate(sentense_len=lengths(gregexpr("\\W+", text)) + 1)
+m1=aov(log(sentense_len)~factor(sentimentValue),data=red_len)
+summary(m1)
+plot(red_len$sentimentValue %>% as.factor(),red_len$sentense_len,xlab="情緒值",ylab="字數")
+```
+
+
+* 以每 80 局分別計算情緒值，並以 barplot 顯示
+
+
+```{r}
+red9=red8 %>% group_by(index_line80=index%/%80) %>% summarise_each(funs(mean),-index,-chapter,-sentiment,-text) 
+
+red10=red9%>% gather(method,sentiment,-index_line80)
+
+#cor(red9 %>% select(-index_line80)) %>% print
+
+#若要轉換成是以 chapter 是用這個 code
+# red10=red8 %>% group_by(index_line80=chapter) %>% summarise_each(funs(mean),-index,-chapter,-sentiment,-text) %>% gather(method,sentiment,-index_line80)
+
+red10%>%
+  ggplot(aes(index_line80, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+
+#
+
+```
+
+
+
+#### 從回傳的物件中提取斷詞、詞彙還原、詞性標註、命名實體標註等結果
+
+
+##### tokens 
+
+
+
+```{r}
+tokens =  coreNLP_tokens_parser(obj)
+tokens %>% head
+```
+
+coreNLP_tokens_parser欄位:
+
++ status_id : 對應原本df裡的status_id，為一則tweets的唯一id
++ word: 原始斷詞
++ lemma : 對斷詞做詞形還原
++ pos : part-of-speech,詞性
++ ner: 命名實體
+
+
+#### 從NER查看特定類型的實體
+
+
+
+```{r}
+tokens$lower_word = tolower(tokens$word)
+tokens$lower_lemma = tolower(tokens$lemma)
+```
+
+
+
+
+```{r}
+tokens %>%
+  filter(ner == "PERSON") %>%  #篩選NER為PERSION
+  group_by(lower_word) %>% #根據word分組
+  summarize(count = n()) %>% #計算每組
+  top_n(n = 15, count) %>%
+  ungroup() %>%
+  mutate(lower_word = reorder(lower_word, count)) %>%
+  ggplot(aes(lower_word, count)) +
+  geom_col()+
+  ggtitle("Word Frequency (NER is PERSON)") +
+  theme(text=element_text(size=14))+
+  coord_flip()
+```
+
+
+
+
+```{r}
+tokens %>%
+  filter(ner == "COUNTRY") %>%  #篩選NER為COUNTRY
+  group_by(lower_word) %>% #根據word分組
+  summarize(count = n()) %>% #計算每組
+  top_n(n = 10, count) %>%
+  ungroup() %>%
+  mutate(lower_word = reorder(lower_word, count)) %>%
+  ggplot(aes(lower_word, count)) +
+  geom_col()+
+  ggtitle("Word Frequency (NER is COUNTRY)") +
+  theme(text=element_text(size=14))+
+  coord_flip()
+```
+
+
+
+
+
+```{r}
+tokens %>%
+  anti_join(stop_words,by = c("lower_lemma"="word"))  %>%
+  group_by(lower_lemma) %>%
+  summarise(count = n()) %>% 
+  filter(regex()) %>%
+  top_n(n = 20, count) %>%
+  arrange(desc(count)) %>% kable
+```
+
