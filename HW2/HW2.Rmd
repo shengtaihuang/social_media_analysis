@@ -168,8 +168,7 @@ source("sentiment_function.R")
 
 #### 將句子丟入服務
 
-取得coreNLP回傳的物件<br>
-先不要跑這段，會花大概18分鐘（如果你記憶體只有4G可能會當掉...）
+取得coreNLP回傳的物件
 
 ```{r}
 load("coreNLP_HW_0330_all_120.RData")
@@ -192,7 +191,6 @@ load("coreNLP_HW_0330_all_120.RData")
 * 利用 coreNLP 計算句子情緒
 * 與 "AFinn"、"bing" 和 "NRC" 的情緒值合併
 * 將情緒值轉換成 -1,0,1 負面，無情緒與正面，並計算重疊率
-* 
 
 ```{r}
 char2num<-function(x){
@@ -207,12 +205,10 @@ red8=red3 %>% left_join(sentiment,c("index"="linenumber"))
 red8_sign=red8 %>% select(AFINN,`Bing et al.`,NRC,sentimentValue) %>% mutate_all(sign)
 #計算重疊率
 sapply(red8_sign, function(x) sapply(red8_sign, function(y) mean(x==y))) %>% print
-#
-
 ```
 
-* 從上表可得出 "bing" 和 "corenlp" 情緒結果較為相近
-* 將 "bing" 和 "corenlp" 正負面的對應表以比例輸出
+* 從上表可得出在句子上 "bing" 和 "corenlp" 情緒結果較為相近
+* 將 "bing" 和 "corenlp" 各句子的正負面對應表以比例輸出
 ```{r}
 tmp=(table(red8_sign$sentimentValue,red8_sign$`Bing et al.`)/nrow(red8_sign)) 
 rownames(tmp)=paste("corenlp",c("負","中","正"))
@@ -220,9 +216,9 @@ colnames(tmp)=paste("bing",c("負","中","正"))
 tmp
 ```
 
+
 * 從結果可以知道大部分不合理資料集中在當 "corenlp" 為負面和 "bing" 為正面時
 * 故將部部分不一致的結果進行輸出
-
 ```{r}
 red_tmp=red8 %>% filter(sign(sentimentValue)==-1,sign(`Bing et al.`)==1)
 red_tmp %>% head(10) %>% kable
@@ -230,20 +226,7 @@ red_tmp %>% head(10) %>% kable
 
 
 
-* 從上表能看出該該小說的句子字數都較長
-* 故想探討字數與情緒的關係
-* 從 anova 可得出不同情緒的字數是有顯著差異
-```{r}
-red_len=red8 %>% mutate(sentense_len=lengths(gregexpr("\\W+", text)) + 1)
-m1=aov(log(sentense_len)~factor(sentimentValue),data=red_len)
-summary(m1)
-plot(red_len$sentimentValue %>% as.factor(),red_len$sentense_len,xlab="情緒值",ylab="字數")
-```
-
-
 * 以每 80 局分別計算情緒值，並以 barplot 顯示
-
-
 ```{r}
 red9=red8 %>% group_by(index_line80=index%/%80) %>% summarise_each(funs(mean),-index,-chapter,-sentiment,-text) 
 
@@ -259,11 +242,45 @@ red10%>%
   geom_col(show.legend = FALSE) +
   facet_wrap(~method, ncol = 1, scales = "free_y")
 
-#
+```
 
+* 從上圖可得知 "corenlp" 的句子多數為負面
+* 因為該小說的句子字數都較長，故懷疑 "corenlp" 對句子較長的句子分析結果較差
+* 故想探討句子的字數，對情緒的判斷有無關係
+* 從 anova 可得出不同情緒的字數是有顯著差異
+```{r}
+par(mfrow=c(1,1))
+red_len=red8 %>% mutate(sentense_len=lengths(gregexpr("\\W+", text)) + 1)
+m1=aov(log(sentense_len)~factor(sentimentValue),data=red_len)
+summary(m1)
+plot(red_len$sentimentValue %>% as.factor(),red_len$sentense_len,xlab="情緒值",ylab="字數")
 ```
 
 
+* 比較"corenlp" 判斷為正面句子中的詞彙比率與判斷為負面句子中的詞彙比率
+* 詞彙大小是以比率差異，即差異越大，詞彙就越大
+* 紅色為詞彙在正面句子出現比率大於負面句子出現比率，黑色則相反
+```{r}
+red_tmp1=red8 %>% filter(sign(sentimentValue)==-1)
+red_bing=red2 %>% filter(linenumber %in% red_tmp1$index)
+tmp1=red_bing %>%  group_by(word) %>%
+  summarise(count=n()) %>%ungroup %>% mutate(pro=count/sum(count))%>% arrange(desc(count))
+
+red_tmp2=red8 %>% filter(sign(sentimentValue)==1)
+red_bing2=red2 %>% filter(linenumber %in% red_tmp2$index) 
+tmp2=red_bing2 %>%  group_by(word) %>%
+  summarise(count=n())%>%ungroup%>% mutate(pro=count/sum(count))%>% arrange(desc(count))
+
+
+
+tmp_all=tmp1 %>% full_join(tmp2,by=c("word")) %>% mutate_at(vars(-word), function(x) ifelse(is.na(x),0,x)) %>% 
+  anti_join(stop_words)
+
+
+tmp_all2=tmp_all %>% mutate(abs_pro_diff=abs(pro.y-pro.x),sign_pro_diff=sign(pro.y-pro.x)) %>% mutate(freq=abs_pro_diff)%>% arrange(desc(abs_pro_diff)) %>% select(word,abs_pro_diff,sign_pro_diff,freq) %>% top_n(60,abs_pro_diff);
+wordcloud2(tmp_all2,color = c("black","red")[(tmp_all2$sign_pro_diff+3)/2])
+  
+```
 
 #### 從回傳的物件中提取斷詞、詞彙還原、詞性標註、命名實體標註等結果
 
@@ -337,10 +354,10 @@ tokens %>%
 
 ```{r}
 tokens %>%
-  anti_join(stop_words,by = c("lower_lemma"="word"))  %>%
+  anti_join(stop_words,by = c("lower_lemma"="word")) %>% 
+  filter(str_detect(lower_lemma, regex("^[a-z].*$",ignore_case = TRUE)))%>%
   group_by(lower_lemma) %>%
   summarise(count = n()) %>% 
-  filter(regex()) %>%
   top_n(n = 20, count) %>%
   arrange(desc(count)) %>% kable
 ```
