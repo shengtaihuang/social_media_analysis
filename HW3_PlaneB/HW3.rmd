@@ -1,20 +1,20 @@
 ---
-title: "²Ä¤E²Õ¡GTF-IDF »P Bigram ±¡ºü¤ÀªR¡]Treasure Island¡^"
-author: "²Ä¤E²Õ"
+title: "ç¬¬ä¹çµ„ï¼šTF-IDF èˆ‡ Bigram æƒ…ç·’åˆ†æï¼ˆTreasure Islandï¼‰"
+author: "ç¬¬ä¹çµ„"
 date: "2019/04/09"
 output:
   html_document: default
 html_notebook: default
 pdf_document: default
-abstract: TF-IDF »P Bigram ±¡ºü¤ÀªR
+abstract: TF-IDF èˆ‡ Bigram æƒ…ç·’åˆ†æ
 ---
 
-# ¨t²Î°Ñ¼Æ³]©w
+# ç³»çµ±åƒæ•¸è¨­å®š
 ```{r}
-Sys.setlocale(category = "LC_ALL", locale = "zh_TW.UTF-8") # Á×§K¤¤¤å¶Ã½X
+Sys.setlocale(category = "LC_ALL", locale = "zh_TW.UTF-8") # é¿å…ä¸­æ–‡äº‚ç¢¼
 ```
 
-## ¦w¸Ë»İ­nªºpackages
+## å®‰è£éœ€è¦çš„packages
 ```{r echo = F, results = 'hide'}
 packages = c("dplyr", "tidytext", "jiebaR", "gutenbergr", "stringr", "wordcloud2", "ggplot2", "tidyr", "scales")
 existing = as.character(installed.packages()[,1])
@@ -48,34 +48,34 @@ library(stringr)
 library(qdapDictionaries)
 
 clean = function(txt) {
-  txt = iconv(txt, "latin1", "ASCII", sub="") #Âà´«½s½X
-  txt = gsub("(@|#)\\w+", "", txt) #¥h°£@©Î#«á¦³¼Æ¦r,¦r¥À,©³½u (¼Ğ°O¤H¦W©Îhashtag)
-  txt = gsub("(http|https)://.*", "", txt) #¥h°£ºô§}
-  txt = gsub("[\t]{2,}", "", txt) #¥h°£¨â­Ó¥H¤Wªºtab
-  txt = gsub("\\n"," ",txt) #¥h°£´«¦æ
-  txt = gsub("&.*;","",txt) #¥h°£html¯S®í¦r¤¸½s½X
+  txt = iconv(txt, "latin1", "ASCII", sub="") #è½‰æ›ç·¨ç¢¼
+  txt = gsub("(@|#)\\w+", "", txt) #å»é™¤@æˆ–#å¾Œæœ‰æ•¸å­—,å­—æ¯,åº•ç·š (æ¨™è¨˜äººåæˆ–hashtag)
+  txt = gsub("(http|https)://.*", "", txt) #å»é™¤ç¶²å€
+  txt = gsub("[\t]{2,}", "", txt) #å»é™¤å…©å€‹ä»¥ä¸Šçš„tab
+  txt = gsub("\\n"," ",txt) #å»é™¤æ›è¡Œ
+  txt = gsub("&.*;","",txt) #å»é™¤htmlç‰¹æ®Šå­—å…ƒç·¨ç¢¼
   
-  #³Ì«á¦A¾ã²zªÅ®æ
-  txt = gsub("\\s+"," ",txt) #¥h°£¤@­Ó¥H¤WªºªÅ®æ
-  txt = gsub("^\\s+|\\s+$","",txt) #¥h°£«e«á¤@­Ó¥H¤WªºªÅ®æ
+  #æœ€å¾Œå†æ•´ç†ç©ºæ ¼
+  txt = gsub("\\s+"," ",txt) #å»é™¤ä¸€å€‹ä»¥ä¸Šçš„ç©ºæ ¼
+  txt = gsub("^\\s+|\\s+$","",txt) #å»é™¤å‰å¾Œä¸€å€‹ä»¥ä¸Šçš„ç©ºæ ¼
   
-  #¥u¯d¤U§Ú­Ì·Q¬İªº¦r¤¸
-  txt = gsub("[^a-zA-Z0-9?!.;\" ']","",txt) #°£¤F¦r¥À,¼Æ¦r ?!.' ,ªÅ¥Õªº³£¥h±¼
+  #åªç•™ä¸‹æˆ‘å€‘æƒ³çœ‹çš„å­—å…ƒ
+  txt = gsub("[^a-zA-Z0-9?!.;\" ']","",txt) #é™¤äº†å­—æ¯,æ•¸å­— ?!.' ,ç©ºç™½çš„éƒ½å»æ‰
   txt=gsub("(Mr|Dr|Miss|Ms|Mstr|Rs|Dr)\\.","",txt)
   
   txt } 
 ```
-#®ÑÄy¤U¸ü
+#æ›¸ç±ä¸‹è¼‰
 
 
-* ¦b¤ÀªR Zipf's law ©M TF-IDF ®É 
-* ¤ÀªR®ÑÄy
+* åœ¨åˆ†æ Zipf's law å’Œ TF-IDF æ™‚ 
+* åˆ†ææ›¸ç±
     - Treasure Island
     - A Tale of Two Cities
     - Alice's Adventures in Wonderland
     - The Adventures of Tom Sawyer
 
-* ¥ıÆ[¹î Zipf¡¦s law ²Å¦X»P§_
+* å…ˆè§€å¯Ÿ Zipfâ€™s law ç¬¦åˆèˆ‡å¦
 
 ```{r}
 #load("coreNLP_HW_0407_all_120.RData")
@@ -100,15 +100,15 @@ freq_by_rank %>%
   geom_line(size = 1.1, alpha = 0.8, show.legend = T) + 
   scale_x_log10() +
   scale_y_log10()+ 
-  scale_colour_discrete(name = "¤Hª«",breaks=levels(factor(freq_by_rank$author)),labels =c("Alice","Two Cities","Treasure","Tom"))
+  scale_colour_discrete(name = "äººç‰©",breaks=levels(factor(freq_by_rank$author)),labels =c("Alice","Two Cities","Treasure","Tom"))
   
 
 ```
 
-±o¥Xµ²ªG°ò¥»²Å¦X Zipf¡¦s law
+å¾—å‡ºçµæœåŸºæœ¬ç¬¦åˆ Zipfâ€™s law
 
-# TF-IDF µ²ªG 
-* ±N TF-IDF ³Ì°ªªº«e 20 ¦rµe¥X
+# TF-IDF çµæœ 
+* å°‡ TF-IDF æœ€é«˜çš„å‰ 20 å­—ç•«å‡º
 
 ```{r fig.width=8*4/3, fig.height=8}
 red_word_count <- red_word_count  %>%
@@ -127,10 +127,10 @@ red_word_count %>%
   coord_flip()
 ```
 
-# ¥[¤J bigram ¶i¦æ¤ÀªR
-* Ä~Äò HW2 ¡iTreasure Island¡j®ÑÄyªº¤ÀªR
-* ±N¤§«eªº¤ÀªRµ²ªGÅª¤J
-* ¦C¥X«e 10 ¤j bigram ¥X²{¦¸¼Æ³Ì¦hªº¦r
+# åŠ å…¥ bigram é€²è¡Œåˆ†æ
+* ç¹¼çºŒ HW2 ã€Treasure Islandã€‘æ›¸ç±çš„åˆ†æ
+* å°‡ä¹‹å‰çš„åˆ†æçµæœè®€å…¥
+* åˆ—å‡ºå‰ 10 å¤§ bigram å‡ºç¾æ¬¡æ•¸æœ€å¤šçš„å­—
 
 ```{r}
 load("coreNLP_HW_0407_all_120.RData")
@@ -141,7 +141,7 @@ red_bigram%>%
   count(bigram, sort = TRUE) %>% head(10) %>% kable
 ```
 
-* ±N stop word §R°£«á¡A¦C¥X«e 10 ¤j bigram ¥X²{¦¸¼Æ³Ì¦hªº¦r
+* å°‡ stop word åˆªé™¤å¾Œï¼Œåˆ—å‡ºå‰ 10 å¤§ bigram å‡ºç¾æ¬¡æ•¸æœ€å¤šçš„å­—
 ```{r}
 bigrams_separated <- red_bigram %>%
   separate(bigram, c("word1", "word2"), sep = " ")
@@ -165,9 +165,9 @@ bigram_counts %>% na.omit%>% head(10) %>% kable
 <!-- bigrams_united -->
 <!-- ``` -->
 
-# ¨Ï¥Î bigram ¶i¦æ±¡ºü¤ÀªR
-* negation word ¥D­n¨Ï¥Î R package "qdapDictionaries" ¤¤ªº negation.words ÅÜ¼Æ
-* ¨Ï¥Î±¡ºüµü¨å bing »P bigram ±N±¡ºü­×¥¿«áªºµü·J¦C¥X
+# ä½¿ç”¨ bigram é€²è¡Œæƒ…ç·’åˆ†æ
+* negation word ä¸»è¦ä½¿ç”¨ R package "qdapDictionaries" ä¸­çš„ negation.words è®Šæ•¸
+* ä½¿ç”¨æƒ…ç·’è©å…¸ bing èˆ‡ bigram å°‡æƒ…ç·’ä¿®æ­£å¾Œçš„è©å½™åˆ—å‡º
 ```{r fig.width=15*4/3, fig.height=15}
 data.frame(negation_words=negation.words) %>% kable
 
@@ -201,7 +201,7 @@ negated_words %>%
 ```
 
 
-* ¤ñ¸û¥y¤l¦b­×¥¿«e«áªº±¡ºü®t²§
+* æ¯”è¼ƒå¥å­åœ¨ä¿®æ­£å‰å¾Œçš„æƒ…ç·’å·®ç•°
 
 ```{r}
 
@@ -218,8 +218,8 @@ red3_bing=red3 %>% select(index,`Bing et al.`) %>% left_join(negated_words_with_
 red3_bing=red3_bing %>% mutate(`Bing et al.new`=`Bing et al.`+ 2*ifelse(is.na(total_bigram_score),0,total_bigram_score))
 red3_bing2=red3_bing %>% select(index,`Bing et al.`,`Bing et al.new`)
 tmp_table=red3_bing2 %>% select(`Bing et al.`,`Bing et al.new`) %>% mutate_all(sign) %>% table
-rownames(tmp_table)=paste("bing",c("­t","¤¤","¥¿"),sep="<br>")
-colnames(tmp_table)=paste("bigram bing",c("­t","¤¤","¥¿"),sep="<br>")
+rownames(tmp_table)=paste("bing",c("è² ","ä¸­","æ­£"),sep="<br>")
+colnames(tmp_table)=paste("bigram bing",c("è² ","ä¸­","æ­£"),sep="<br>")
 tmp_table %>% kable
 ```
 
@@ -229,8 +229,8 @@ change_sentiment_text=red8_bing %>% filter(sign(`Bing et al.`)!=sign(`Bing et al
 change_sentiment_text %>% head(10) %>% kable
 ```
 
-* ±N¦U³¹¸`¨Ï¥Î bing ­×¥¿«e«áªº±¡ºüµe¥X¡A¨Ã¼Ğ¥X³Ì¥¿­t­±ªº±¡ºü³¹¸`
-* ¦P®É±N±¡ºü¦³ÅÜ¤Æªº³¹¸`¦C¥X
+* å°‡å„ç« ç¯€ä½¿ç”¨ bing ä¿®æ­£å‰å¾Œçš„æƒ…ç·’ç•«å‡ºï¼Œä¸¦æ¨™å‡ºæœ€æ­£è² é¢çš„æƒ…ç·’ç« ç¯€
+* åŒæ™‚å°‡æƒ…ç·’æœ‰è®ŠåŒ–çš„ç« ç¯€åˆ—å‡º
 
 
 ```{r}
