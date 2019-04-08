@@ -11,8 +11,6 @@ abstract: TF-IDF 與 Bigram 情緒分析
 
 ```{r}
 Sys.setlocale(category = "LC_ALL", locale = "zh_TW.UTF-8") # 避免中文亂碼
-
-
 ```
 
 ## 安裝需要的packages
@@ -38,6 +36,7 @@ require(reshape2)
 require(widyr)
 ```
 
+## 使用文字分析平台收集03/19-04/04期間，PTT八卦版上討論遊戲「隻狼：暗影雙死」文章
 ```{r}
 #載入原始資料集
 sekiro<- read_csv("./sekiro_test_articleMetaData.csv") %>%
@@ -74,7 +73,8 @@ sapply(sample_sentences, length)
 # 使用rep去配對原本資料的artUrl以及sapply的回傳（每篇文章包含了幾個句）
 # 產生的長度會與 unlist(sample_sentences) 的長度一樣，
 # 兩邊join起來就可以新增一個欄位代表每個句子來自哪篇文章
-rep(sample_data$artUrl, sapply(sample_sentences, length))
+sekiro_rep <- rep(sample_data$artUrl, sapply(sample_sentences, length))
+sekiro %>% head(5)
 ```
 
 ```{r}
@@ -98,7 +98,7 @@ sekiro_sentences <- data.frame(
 
 sekiro_sentences$sentence <- as.character(sekiro_sentences$sentence)
 
-sekiro_sentences
+sekiro_sentences %>% head(5)
 ```
 
 
@@ -174,8 +174,6 @@ sekiro_words_tf_idf %>%
   count(word, sort=TRUE)
 ```
 
-> 因爲我們是以每篇文章爲一個document單位（總共有600個document）<br>
-  因此我們就不畫課本第三章中，比較各document中tf-idf較高的詞彙比較圖
   
 ### bigram function
 ```{r}
@@ -226,7 +224,6 @@ jieba_ngram_3 <- function(t) {
 
 ```
 
-
 ```{r}
 # 執行ngram分詞
 sekiro_ngram_3 <- sekiro %>%
@@ -235,7 +232,7 @@ sekiro_ngram_3 %>%
   filter(!str_detect(ngrams, regex("[0-9a-zA-Z]"))) %>%
   count(ngrams, sort = TRUE)
 ```
-> 上方的結果可以發現有很多包含停止詞的bigram組合，所以我們接著將停止詞清楚再看看又什麼新組合
+> 以上可以看到與遊戲體驗有關的字詞
 
 ## Remove stop words
 ### 載入stop words字典
@@ -298,7 +295,9 @@ game_co_neg_words <- data.frame(word=t(game_co_neg_words))
 rownames(game_co_neg_words)<-c(1:73)
 game_co_neg_words <- as.character(game_co_neg_words$word)
 ```
+> 遊戲在設計時考慮到許多現實揮刀打鬥的細節，因此遊戲操作上較為困難，對遊戲公司而言，玩家認為遊戲困難才是具備挑戰性，因此"難"、"困難"、"死"對遊戲公司而言，屬於正向情緒
 
+## 討論遊戲時會出現遊戲類別、背景及角色場景等內容
 ```{r}
 # 隻狼遊戲用詞字典
 sekiro_lexicon
@@ -336,7 +335,7 @@ sekiro_words_tf_idf_ns %>%
   ungroup() %>%
   count(word, sort=TRUE)
 ```
-
+> 遊戲上市後，有許多遊戲實況主開始玩隻狼，因此出現推薦、討論遊戲實況的文章
 
 ## bigram
 ```{r}
@@ -423,7 +422,7 @@ sentiment_plot_data
 ```
 
 ```{r}
-# 畫圖
+# 每日正負面討論
 sentiment_plot_data %>%
   ggplot()+
   geom_line(aes(x=artDate,y=count,colour=sentiment))+
