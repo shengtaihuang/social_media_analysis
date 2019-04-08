@@ -1,5 +1,5 @@
 ---
-title: "第九組：TF-IDF 與 Bigram 情緒分析（Treasure Island）"
+title: "第九組：TF-IDF 與 Bigram 情緒分析（隻狼：暗影雙死）"
 author: "第九組"
 date: "2019/04/09"
 output:
@@ -14,13 +14,13 @@ Sys.setlocale(category = "LC_ALL", locale = "zh_TW.UTF-8") # 避免中文亂碼
 ```
 
 ## 安裝需要的packages
-```{r}
+```{r echo = F, results = 'hide'}
 packages = c("readr", "dplyr", "stringr", "jiebaR", "tidytext", "NLP", "readr", "tidyr", "ggplot2", "ggraph", "igraph", "scales", "reshape2", "widyr")
 existing = as.character(installed.packages()[,1])
 for(pkg in packages[!(packages %in% existing)]) install.packages(pkg)
 ```
 
-```{r}
+```{r echo = F, results = 'hide'}
 require(readr)
 require(dplyr)
 require(stringr)
@@ -34,61 +34,26 @@ require(igraph)
 require(scales)
 require(reshape2)
 require(widyr)
+require(knitr)
+library(kableExtra)
+library(data.table)
 ```
-
-## 使用文字分析平台收集03/19-04/04期間，PTT八卦版上討論遊戲「隻狼：暗影雙死」文章
+#載入資料集
+* 列出前資料前 10 列
 ```{r}
 #載入原始資料集
 sekiro<- read_csv("./sekiro_test_articleMetaData.csv") %>%
               mutate(sentence=gsub("[\n]{2,}", "。", sentence))
-sekiro
-```
- 
-## 先做斷句，將PTT上的原始資料進行斷句
-```{r}
-sample_data <- sekiro%>% head(4)
-# 以全形或半形 驚歎號、問號、分號 以及 全形句號 爲依據進行斷句(strsplit)
-sample_sentences <- strsplit(sample_data$sentence,"[。！；？!?;]")
-# 回傳結果為list of vectors，每個vector的內容為每篇文章的斷句結果
-sample_sentences
-```
-
-```{r}
-# unlist會將list中所有的vector展開成一個一維的vector
-sentences <- unlist(sample_sentences)
-sentences
-```
-> 但在unlist後我們就沒辦法判別，出現的每一句話是出自於哪篇文章了<br>
-  我們希望在unlist的同時能夠保留句子屬於哪篇文章的資訊
-
-### rep function
-```{r}
-# 原本資料的artUrl
-sample_data$artUrl
-# 回傳每篇文章的斷句後，包含了幾個句（vector的長度）
-sapply(sample_sentences, length)
-```
-
-```{r}
-# 使用rep去配對原本資料的artUrl以及sapply的回傳（每篇文章包含了幾個句）
-# 產生的長度會與 unlist(sample_sentences) 的長度一樣，
-# 兩邊join起來就可以新增一個欄位代表每個句子來自哪篇文章
-sekiro_rep <- rep(sample_data$artUrl, sapply(sample_sentences, length))
-sekiro %>% head(5)
-```
-
-```{r}
-data.frame(artUrl=rep(sample_data$artUrl, sapply(sample_sentences, length)),
-           sentences = unlist(sample_sentences))
+sekiro %>% head(10) %>% kable %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  scroll_box(height = "300px")
 ```
 
 ## 對全部的文章進行斷句，並儲存結果
+* 將前 10 列斷句後的資料
 ```{r}
 # 以全形或半形 驚歎號、問號、分號 以及 全形句號 爲依據進行斷句
 sekiro_sentences <- strsplit(sekiro$sentence,"[。！；？!?;]")
-```
-
-```{r}
 # 將每句句子，與他所屬的文章連結配對起來，整理成一個dataframe
 sekiro_sentences <- data.frame(
                         artUrl = rep(sekiro$artUrl, sapply(sekiro_sentences, length)), 
@@ -98,12 +63,16 @@ sekiro_sentences <- data.frame(
 
 sekiro_sentences$sentence <- as.character(sekiro_sentences$sentence)
 
-sekiro_sentences %>% head(5)
+sekiro_sentences %>% head(10) %>% kable%>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+  scroll_box(height = "300px")
 ```
 
 
 ## 接着做斷詞
-### 1.初始化斷詞器
+* 初始化斷詞器
+* 斷詞與整理斷詞結果
+* 將前出現頻率前 10 大字列出
 ```{r}
 # 使用默認參數初始化一個斷詞引擎
 # 先不使用任何的字典和停用詞
@@ -119,53 +88,34 @@ chi_tokenizer <- function(t) {
     }
   })
 }
-```
 
-### 2.斷詞與整理斷詞結果
-```{r}
 # 進行斷詞，並計算各詞彙在各文章中出現的次數
 sekiro_words <- sekiro_sentences %>%
   unnest_tokens(word, sentence, token=chi_tokenizer) %>%
   filter(!str_detect(word, regex("[0-9a-zA-Z]"))) %>%
   count(artUrl, word, sort = TRUE)
-sekiro_words
+sekiro_words %>% head(10) 
 ```
 
-```{r}
-# 計算每篇文章包含的詞數
-total_words <- sekiro_words %>% 
-  group_by(artUrl) %>% 
-  summarize(total = sum(n))
-total_words
-```
 
-```{r}
-# 合併 devotion_words（每個詞彙在每個文章中出現的次數）
-# 與 total_words（每篇文章的詞數）
-# 新增各個詞彙在所有詞彙中的總數欄位
-sekiro_words <- left_join(sekiro_words, total_words)
-sekiro_words
-```
+
 
 ## 計算 tf-idf
+* 以每篇文章爲單位，計算每個詞彙在的tf-idf值
 ```{r}
-# 以每篇文章爲單位，計算每個詞彙在的tf-idf值
 sekiro_words_tf_idf <- sekiro_words %>%
   bind_tf_idf(word, artUrl, n)
-sekiro_words_tf_idf
-```
 
-```{r}
-# 選出每篇文章，tf-idf最大的十個詞
 sekiro_words_tf_idf %>% 
   group_by(artUrl) %>%
   top_n(10) %>%
   arrange(desc(artUrl))
 ```
 
+* 選每篇文章，tf-idf最大的十個詞，
+* 並查看每個詞被選中的次數
 ```{r}
-# 選每篇文章，tf-idf最大的十個詞，
-# 並查看每個詞被選中的次數
+
 sekiro_words_tf_idf %>% 
   group_by(artUrl) %>%
   top_n(10) %>%
@@ -174,8 +124,12 @@ sekiro_words_tf_idf %>%
   count(word, sort=TRUE)
 ```
 
+> 因爲我們是以每篇文章爲一個document單位（總共有76個document）<br>
+  因此我們就不畫課本第三章中，比較各document中tf-idf較高的詞彙比較圖
   
 ### bigram function
+* 載入 stop word 和 negation word 
+* 刪除 stop word 後列出前10 大頻率的 bigram
 ```{r}
 # remove stopwords
 jieba_tokenizer = worker()
@@ -191,52 +145,7 @@ jieba_bigram <- function(t) {
     unlist(bigram)
   })
 }
-```
 
-```{r}
-# 執行bigram分詞
-sekiro_bigram <- sekiro %>%
-  unnest_tokens(bigram, sentence, token = jieba_bigram)
-sekiro_bigram
-```
-
-```{r}
-# 清楚包含英文或數字的bigram組合
-# 計算每個組合出現的次數
-sekiro_bigram %>%
-  filter(!str_detect(bigram, regex("[0-9a-zA-Z]"))) %>%
-  count(bigram, sort = TRUE)
-```
-
-
-```{r}
-# unnest_tokens 使用的ngram分詞函數
-# Input: a character vector
-# Output: a list of character vectors of the same length
-jieba_ngram_3 <- function(t) {
-  lapply(t, function(x) {
-    tokens <- segment(x, jieba_tokenizer)
-    ngram<- ngrams(unlist(tokens), 3)
-    ngram <- lapply(ngram, paste, collapse = " ")
-    unlist(ngram)
-  })
-}
-
-```
-
-```{r}
-# 執行ngram分詞
-sekiro_ngram_3 <- sekiro %>%
-  unnest_tokens(ngrams, sentence, token = jieba_ngram_3)
-sekiro_ngram_3 %>%
-  filter(!str_detect(ngrams, regex("[0-9a-zA-Z]"))) %>%
-  count(ngrams, sort = TRUE)
-```
-> 以上可以看到與遊戲體驗有關的字詞
-
-## Remove stop words
-### 載入stop words字典
-```{r}
 # load stop words
 stop_words <- scan(file = "./dict/stop_words.txt", what=character(),sep='\n', 
                    encoding='utf-8',fileEncoding='utf-8')
@@ -246,40 +155,57 @@ negation_words <- scan(file = "./dict/negation_words.txt", what=character(),sep=
 
 # remove negation words from stop words list
 stop_words <- stop_words[!(stop_words %in% c(negation_words))] #如果negation出現在stop word時，不能被刪除
-```
 
-```{r}
-# 否定詞
-negation_words
-```
+# 執行bigram分詞
+sekiro_bigram <- sekiro %>%
+  unnest_tokens(bigram, sentence, token = jieba_bigram)
 
-```{r}
+
+# 清楚包含英文或數字的bigram組合
+# 計算每個組合出現的次數
 # remove the stop words in bigram
 sekiro_bigram %>%
   filter(!str_detect(bigram, regex("[0-9a-zA-Z]"))) %>%
   separate(bigram, c("word1", "word2"), sep = " ") %>% 
   filter(!(word1 %in% stop_words), !(word2 %in% stop_words)) %>%
   count(word1, word2, sort = TRUE) %>%
-  unite_("bigram", c("word1","word2"), sep=" ")
+  unite_("bigram", c("word1","word2"), sep=" ") %>% head(10)
 ```
 
+
+* 刪除 stop word 後列出前10 大頻率的 trigram
 ```{r}
+jieba_ngram_3 <- function(t) {
+  lapply(t, function(x) {
+    tokens <- segment(x, jieba_tokenizer)
+    ngram<- ngrams(unlist(tokens), 3)
+    ngram <- lapply(ngram, paste, collapse = " ")
+    unlist(ngram)
+  })
+}
+
+# 執行ngram分詞
+sekiro_ngram_3 <- sekiro %>%
+  unnest_tokens(ngrams, sentence, token = jieba_ngram_3)
+sekiro_ngram_3 %>%
+  filter(!str_detect(ngrams, regex("[0-9a-zA-Z]"))) %>%
+  count(ngrams, sort = TRUE)
+
 # remove the stop words in ngram(n=3)
 sekiro_ngram_3 %>%
   filter(!str_detect(ngrams, regex("[0-9a-zA-Z]"))) %>%
   separate(ngrams, c("word1", "word2", "word3"), sep = " ") %>% 
   filter(!(word1 %in% stop_words), !(word2 %in% stop_words), !(word3 %in% stop_words)) %>%
   count(word1, word2, word3, sort = TRUE) %>%
-  unite_("ngrams", c("word1", "word2", "word3"), sep=" ")
+  unite_("ngrams", c("word1", "word2", "word3"), sep=" ")%>% head(10)
 ```
-> 從上面的bigram和ngram(n=3)的結果中，我們可以整理出一個更好的斷詞字典。<br>
-  我們將詞彙整理好存在dict文件夾中的 devotion_lexicon.txt 中
-
+> 從上面的bigram和ngram(n=3)的結果中，我們可以整理出一個斷詞字典。<br>
+  我們將詞彙整理好存在dict文件夾中的 sekiro_lexicon.txt 中
 
 
 ### 載入各種字典
+* 讀入整理好的字典和情緒字典
 ```{r}
-library(data.table)
 # load sekiro_lexicon
 sekiro_lexicon <- fread(file = "./dict/sekiro_lexicon.txt", header= F,sep='\n', encoding = "UTF-8")
 colnames(sekiro_lexicon)[1] <- "word"
@@ -295,49 +221,16 @@ game_co_neg_words <- data.frame(word=t(game_co_neg_words))
 rownames(game_co_neg_words)<-c(1:73)
 game_co_neg_words <- as.character(game_co_neg_words$word)
 ```
-> 遊戲在設計時考慮到許多現實揮刀打鬥的細節，因此遊戲操作上較為困難，對遊戲公司而言，玩家認為遊戲困難才是具備挑戰性，因此"難"、"困難"、"死"對遊戲公司而言，屬於正向情緒
 
-## 討論遊戲時會出現遊戲類別、背景及角色場景等內容
+
+* 列出隻狼整理好的字典
 ```{r}
-# 隻狼遊戲用詞字典
 sekiro_lexicon
 ```
 
-## 計算使用自訂字典、刪除stop word之後的 tf-idf
-```{r}
-# 篩選掉stop word
-stop_words <- data.frame(word = stop_words) #轉換成df做anti_join
-sekiro_words_ns <- sekiro_words %>% anti_join(.,stop_words,by = c("word"))
-```
 
-```{r}
-# 以每篇文章爲單位，計算每個詞彙在的tf-idf值
-sekiro_words_tf_idf_ns <- sekiro_words_ns %>%
-  bind_tf_idf(word, artUrl, n)
-sekiro_words_tf_idf_ns
-```
-
-```{r}
-# 選出每篇文章，tf-idf最大的十個詞
-sekiro_words_tf_idf_ns %>% 
-  group_by(artUrl) %>%
-  top_n(10) %>%
-  arrange(desc(artUrl))
-```
-
-```{r}
-# 選每篇文章，tf-idf最大的十個詞，
-# 並查看每個詞被選中的次數
-sekiro_words_tf_idf_ns %>% 
-  group_by(artUrl) %>%
-  top_n(10) %>%
-  arrange(desc(artUrl)) %>%
-  ungroup() %>%
-  count(word, sort=TRUE)
-```
-> 遊戲上市後，有許多遊戲實況主開始玩隻狼，因此出現推薦、討論遊戲實況的文章
-
-## bigram
+* 使用新的字典和情緒字典斷詞
+* 選出 word2 為情緒字的資料
 ```{r}
 # 這裏不加入stop word字典
 # 因為清掉的話會影響bigram出來的結果
@@ -346,7 +239,7 @@ jieba_tokenizer = worker()
 # 使用隻狼字典重新斷詞
 # 把否定詞也加入斷詞
 
-new_user_word(jieba_tokenizer, c(sekiro_lexicon,negation_words))
+new_user_word(jieba_tokenizer, c(sekiro_lexicon,negation_words,game_co_pos_words,game_co_neg_words));
 
 # unnest_tokens 使用的bigram分詞函數
 # Input: a character vector
@@ -359,18 +252,13 @@ jieba_bigram <- function(t) {
     unlist(bigram)
   })
 }
-```
 
 
-```{r}
 # 執行bigram分詞
 sekiro_bigram <- sekiro %>%
   unnest_tokens(bigram, sentence, token = jieba_bigram)
-sekiro_bigram
-```
 
 
-```{r}
 # 將bigram拆成word1和word2
 # 將包含英文字母或和數字的詞彙清除
 bigrams_separated <- sekiro_bigram %>%
@@ -385,7 +273,10 @@ sekiro_sentiment_bigrams <- bigrams_separated %>%
 sekiro_sentiment_bigrams
 ```
 
-## 畫出情緒走勢圖. 詳細可以參考第五週的Code喔
+
+
+## 畫出原本情緒走勢圖
+* 將每一天的情緒走勢畫出
 ```{r}
 # 選出word2中，有出現在情緒詞典中的詞彙
 # 如果是正面詞彙則賦予： 情緒標籤爲"positive"、情緒值爲  1
@@ -393,18 +284,13 @@ sekiro_sentiment_bigrams
 sekiro_sentiment_bigrams <- sekiro_sentiment_bigrams %>%
   select(artDate, word1, word2) %>%
   mutate(sentiment=ifelse(word2 %in% game_co_pos_words,1,-1), sentiment_tag=ifelse(word2 %in% game_co_pos_words, "positive", "negative"))
-sekiro_sentiment_bigrams
-```
 
-```{r}
+
 # 生成一個時間段中的 日期和情緒標籤的所有可能組合
 all_dates <- 
   expand.grid(seq(as.Date(min(sekiro_sentiment_bigrams$artDate)), as.Date(max(sekiro_sentiment_bigrams$artDate)), by="day"), c("positive", "negative"))
 names(all_dates) <- c("artDate", "sentiment")
-all_dates
-```
 
-```{r}
 # 計算我們資料集中 每日的情緒值
 sentiment_plot_data <- sekiro_sentiment_bigrams %>%
   group_by(artDate,sentiment_tag) %>%
@@ -417,43 +303,33 @@ sentiment_plot_data <- all_dates %>%
   merge(sentiment_plot_data,by.x=c('artDate', "sentiment"),by.y=c('artDate', "sentiment_tag"),
         all.x=T,all.y=T) %>% 
   mutate(count = replace_na(count, 0))
-# 時間區段中，每日的情緒值
-sentiment_plot_data
-```
 
-```{r}
-# 每日正負面討論
+
+# 畫圖
 sentiment_plot_data %>%
   ggplot()+
   geom_line(aes(x=artDate,y=count,colour=sentiment))+
   scale_x_date(labels = date_format("%m/%d")) 
 ```
 
-## 使用否定字來改變詞彙的情緒值
-```{r}
-# 查看 前面出現否定詞 和 後面的所有詞彙
-bigrams_separated %>%
-  filter(word1 %in% negation_words) %>%
-  count(word1, word2, sort = TRUE)
-```
 
+
+
+## 畫出使用 bigram 修正後的情緒走勢圖
+* 查看 前面出現否定詞 且 後面爲情緒詞彙 的組合
 ```{r}
-# 查看 前面出現否定詞 且 後面爲情緒詞彙 的組合
 sekiro_sentiment_bigrams %>%
   filter(word1 %in% negation_words) %>%
-  count(word1, word2, sort = TRUE)
+  count(word1, word2, sort = TRUE) 
 ```
 
+* bigram 修正後的情緒走勢圖
 ```{r}
 # 如果在情緒詞前出現的是否定詞的話，則將他的情緒對調
 sekiro_sentiment_bigrams_negated <- sekiro_sentiment_bigrams %>%
   mutate(sentiment=ifelse(word1 %in% negation_words, -1*sentiment, sentiment)) %>%
   mutate(sentiment_tag=ifelse(sentiment>0, "positive", "negative"))
-sekiro_sentiment_bigrams_negated
-```
 
-### 畫情緒走勢圖
-```{r}
 # 計算我們資料集中 每日的情緒值
 negated_sentiment_plot_data <- sekiro_sentiment_bigrams_negated %>%
   group_by(artDate,sentiment_tag) %>%
@@ -471,69 +347,33 @@ negated_sentiment_plot_data <- all_dates %>%
 negated_sentiment_plot_data %>%
   ggplot()+
   geom_line(aes(x=artDate,y=count,colour=sentiment))+
-  scale_x_date(labels = date_format("%m/%d")) 
+  scale_x_date(labels = date_format("%m/%d"))
 ```
-### 比較negation後的情緒走勢
-```{r}
+
+### 比較negation 後的情緒走勢
+```{r  fig.width=10*4/3, fig.height=10}
 # 合併兩種情緒值的資料
 all_sentiments <- bind_rows(
   sentiment_plot_data %>% mutate(sentiment=paste(sentiment, "_original", sep = "")),
   negated_sentiment_plot_data %>% mutate(sentiment=paste(sentiment, "_negated", sep = ""))) 
-all_sentiments
-```
 
-```{r}
+
 # 先比較正面情緒
 all_sentiments %>% 
   filter(sentiment %in% c("positive_original", "positive_negated")) %>%
   ggplot()+
   geom_line(aes(x=artDate,y=count,colour=sentiment))+
-  scale_x_date(labels = date_format("%m/%d")) 
-```
+  scale_x_date(labels = date_format("%m/%d"))  -> graph1
 
-```{r}
 # 再比較負面情緒
 all_sentiments %>% 
   filter(sentiment %in% c("negative_original", "negative_negated")) %>%
   ggplot()+
   geom_line(aes(x=artDate,y=count,colour=sentiment))+
-  scale_x_date(labels = date_format("%m/%d")) 
-```
+  scale_x_date(labels = date_format("%m/%d")) -> graph2
 
-## 尋找特定詞彙的前後5個詞彙
-```{r}
-# ngram function, where n=11
-ngram_11 <- function(t) {
-  lapply(t, function(x) {
-    tokens <- segment(x, jieba_tokenizer)
-    ngram<- ngrams(tokens, 11)
-    ngram <- lapply(ngram, paste, collapse = " ")
-    unlist(ngram)
-  })
-}
-```
-
-```{r}
-# 執行ngram_11進行分詞
-sekiro_ngram_11 <- sekiro %>%
-  select(artUrl, sentence) %>%
-  unnest_tokens(ngram, sentence, token = ngram_11) %>%
-  filter(!str_detect(ngram, regex("[0-9a-zA-Z]")))
-sekiro_ngram_11
-```
-
-```{r}
-# 將ngram拆成word1 ~ word11
-ngrams_11_separated <- sekiro_ngram_11 %>%
-  separate(ngram, paste0("word", c(1:11),sep=""), sep = " ")
-ngrams_11_separated
+gridExtra::grid.arrange(graph1, graph2, ncol = 1)
 ```
 
 
-```{r}
-# 尋找 "難"出現的前後五個詞彙
-tu_five_words <- ngrams_11_separated %>%
-  filter((word6=="難"))
 
-tu_five_words
-```
