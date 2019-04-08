@@ -1,0 +1,260 @@
+---
+title: "第九組：TF-IDF 與 Bigram 情緒分析（Treasure Island）"
+author: "第九組"
+date: "2019/04/09"
+output:
+  html_document: default
+html_notebook: default
+pdf_document: default
+abstract: TF-IDF 與 Bigram 情緒分析
+---
+
+# 系統參數設定
+```{r}
+Sys.setlocale(category = "LC_ALL", locale = "zh_TW.UTF-8") # 避免中文亂碼
+```
+
+## 安裝需要的packages
+```{r echo = F, results = 'hide'}
+packages = c("dplyr", "tidytext", "jiebaR", "gutenbergr", "stringr", "wordcloud2", "ggplot2", "tidyr", "scales")
+existing = as.character(installed.packages()[,1])
+for(pkg in packages[!(packages %in% existing)]) install.packages(pkg)
+```
+
+```{r echo = F, results = 'hide'}
+require(dplyr)
+require(tidytext)
+require(jiebaR)
+require(gutenbergr)
+library(stringr)
+library(wordcloud2)
+library(ggplot2)
+library(tidyr)
+library(scales)
+require(caTools)
+require(knitr)
+library(wordcloud2)
+library(ggplot2)
+library(scales)
+library(rtweet)
+library(dplyr)
+library(xml2)
+library(httr)
+library(jsonlite)
+library(magrittr)
+library(data.tree)
+library(tidytext)
+library(stringr)
+library(qdapDictionaries)
+
+clean = function(txt) {
+  txt = iconv(txt, "latin1", "ASCII", sub="") #轉換編碼
+  txt = gsub("(@|#)\\w+", "", txt) #去除@或#後有數字,字母,底線 (標記人名或hashtag)
+  txt = gsub("(http|https)://.*", "", txt) #去除網址
+  txt = gsub("[\t]{2,}", "", txt) #去除兩個以上的tab
+  txt = gsub("\\n"," ",txt) #去除換行
+  txt = gsub("&.*;","",txt) #去除html特殊字元編碼
+  
+  #最後再整理空格
+  txt = gsub("\\s+"," ",txt) #去除一個以上的空格
+  txt = gsub("^\\s+|\\s+$","",txt) #去除前後一個以上的空格
+  
+  #只留下我們想看的字元
+  txt = gsub("[^a-zA-Z0-9?!.;\" ']","",txt) #除了字母,數字 ?!.' ,空白的都去掉
+  txt=gsub("(Mr|Dr|Miss|Ms|Mstr|Rs|Dr)\\.","",txt)
+  
+  txt } 
+```
+#書籍下載
+
+
+* 在分析 Zipf's law 和 TF-IDF 時 
+* 分析書籍
+    - Treasure Island
+    - A Tale of Two Cities
+    - Alice's Adventures in Wonderland
+    - The Adventures of Tom Sawyer
+
+* 先觀察 Zipf’s law 符合與否
+
+```{r}
+#load("coreNLP_HW_0407_all_120.RData")
+
+red_word_count <- gutenberg_download(c(120,	98, 11, 74), 
+                              meta_fields = "author")%>%
+  unnest_tokens(word, text) %>%
+  count(author, word, sort = TRUE)
+
+book_word_count=red_word_count %>% group_by(author) %>% summarise(total=n()) 
+
+freq_by_rank=red_word_count  %>% left_join(book_word_count,by="author") %>% 
+  group_by(author) %>% 
+  mutate(TF=n/total,rank=row_number()) ;
+
+m1=lm(log10(TF)~log10(rank),data = freq_by_rank)
+summary(m1)
+
+freq_by_rank %>% 
+  ggplot(aes(rank, TF, color = factor(author))) + 
+  geom_abline(intercept = 0.5, slope = -1.16, color = "gray50", linetype = 2) +
+  geom_line(size = 1.1, alpha = 0.8, show.legend = T) + 
+  scale_x_log10() +
+  scale_y_log10()+ 
+  scale_colour_discrete(name = "人物",breaks=levels(factor(freq_by_rank$author)),labels =c("Alice","Two Cities","Treasure","Tom"))
+  
+
+```
+
+得出結果基本符合 Zipf’s law
+
+# TF-IDF 結果 
+* 將 TF-IDF 最高的前 20 字畫出
+
+```{r fig.width=8*4/3, fig.height=8}
+red_word_count <- red_word_count  %>%
+  bind_tf_idf(word, author, n)
+
+red_word_count %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>% 
+  group_by(author) %>% 
+  top_n(20) %>% 
+  ungroup() %>%
+  ggplot(aes(word, tf_idf, fill = author)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~author, ncol = 2, scales = "free") +
+  coord_flip()
+```
+
+# 加入 bigram 進行分析
+* 繼續 HW2 【Treasure Island】書籍的分析
+* 將之前的分析結果讀入
+* 列出前 10 大 bigram 出現次數最多的字
+
+```{r}
+load("coreNLP_HW_0407_all_120.RData")
+red_bigram <- red  %>%
+  unnest_tokens(bigram, text, token = "ngrams", n = 2)
+
+red_bigram%>%
+  count(bigram, sort = TRUE) %>% head(10) %>% kable
+```
+
+* 將 stop word 刪除後，列出前 10 大 bigram 出現次數最多的字
+```{r}
+bigrams_separated <- red_bigram %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% setdiff(stop_words$word,negation.words)) %>%
+  filter(!word2 %in% stop_words$word)
+
+# new bigram counts:
+bigram_counts <- bigrams_filtered %>% 
+  count(word1, word2, sort = TRUE)
+
+bigram_counts %>% na.omit%>% head(10) %>% kable
+```
+
+
+<!-- ```{r} -->
+<!-- bigrams_united <- bigrams_filtered %>% -->
+<!--   unite(bigram, word1, word2, sep = " ") -->
+
+<!-- bigrams_united -->
+<!-- ``` -->
+
+# 使用 bigram 進行情緒分析
+* negation word 主要使用 R package "qdapDictionaries" 中的 negation.words 變數
+* 使用情緒詞典 bing 與 bigram 將情緒修正後的詞彙列出
+```{r fig.width=15*4/3, fig.height=15}
+data.frame(negation_words=negation.words) %>% kable
+
+negated_words <- bigrams_separated %>%
+  filter(word1 %in% negation.words) %>%
+  inner_join(get_sentiments("bing"), by = c(word2 = "word")) %>%
+  count(word1, word2, sentiment , sort = TRUE) %>% 
+  mutate(score=ifelse(sentiment=="positive",1,-1))
+
+
+
+top_negation_vec=negated_words %>% group_by(word1) %>% 
+  summarise(word1_count=sum(abs(n*score))) %>% 
+  top_n(4,wt = word1_count) %>% select(word1) %>% as.matrix() %>% as.vector()
+
+negated_words %>% 
+  filter(word1%in%top_negation_vec)%>% 
+  arrange(desc(-1*n*score)) %>% 
+  mutate(score_sign=(-1*n*score)>0)%>%
+  mutate(word2 = factor(word2, levels = rev(unique(word2)))) %>% 
+  group_by(word1) %>%   
+  top_n(15,wt = abs(n*score)) %>% 
+  ungroup() %>%
+  ggplot(aes(word2,-1*n*score , fill = score_sign)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~word1, ncol = 2, scales = "free") +
+  coord_flip()
+
+
+```
+
+
+* 比較句子在修正前後的情緒差異
+
+```{r}
+
+negated_words_with_linenumber <- bigrams_separated %>%
+  filter(word1 %in% negation.words) %>%
+  inner_join(get_sentiments("bing"), by = c(word2 = "word")) %>%
+  count(linenumber,word1, word2, sentiment , sort = TRUE) %>% 
+  group_by(linenumber) %>% 
+  summarise(total_bigram_score=sum(-1*ifelse(sentiment=="positive",1,-1)*n)) %>% arrange(linenumber)
+
+
+
+red3_bing=red3 %>% select(index,`Bing et al.`) %>% left_join(negated_words_with_linenumber,by=c("index"="linenumber"))
+red3_bing=red3_bing %>% mutate(`Bing et al.new`=`Bing et al.`+ 2*ifelse(is.na(total_bigram_score),0,total_bigram_score))
+red3_bing2=red3_bing %>% select(index,`Bing et al.`,`Bing et al.new`)
+tmp_table=red3_bing2 %>% select(`Bing et al.`,`Bing et al.new`) %>% mutate_all(sign) %>% table
+rownames(tmp_table)=paste("bing",c("負","中","正"),sep="<br>")
+colnames(tmp_table)=paste("bigram bing",c("負","中","正"),sep="<br>")
+tmp_table %>% kable
+```
+
+```{r}
+red8_bing=red3_bing2 %>% left_join(sentiment,c("index"="linenumber"))
+change_sentiment_text=red8_bing %>% filter(sign(`Bing et al.`)!=sign(`Bing et al.new`))
+change_sentiment_text %>% head(10) %>% kable
+```
+
+* 將各章節使用 bing 修正前後的情緒畫出，並標出最正負面的情緒章節
+* 同時將情緒有變化的章節列出
+
+
+```{r}
+
+red8_bing_summarize_chapter_org=red8_bing %>% group_by(chapter) %>% 
+  summarise(mean_bing=mean(`Bing et al.`),mean_bing_new=mean(`Bing et al.new`))
+
+
+red8_bing_summarize_chapter=red8_bing_summarize_chapter_org%>%
+  gather(method,sentiment,-chapter)
+
+red8_bing_summarize_chapter=red8_bing_summarize_chapter %>% group_by(method) %>% mutate(high_ind=(sentiment==max(sentiment)),low_ind=(sentiment==min(sentiment)))
+
+
+red8_bing_summarize_chapter%>%
+  ggplot(aes(chapter, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = ifelse(high_ind,chapter,"")), vjust = 1,fontface="bold",size=4,color="blue")+
+  geom_text(aes(label = ifelse(low_ind,chapter,"")), vjust = -0.5,fontface="bold",size=4,color="darkred")+
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+
+
+tmp=red8_bing_summarize_chapter_org %>% filter(sign(mean_bing)!=sign(mean_bing_new));
+tmp %>% 
+  left_join(title_data,by=c("chapter"="chapter")) %>% kable
+```
+
