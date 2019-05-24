@@ -1,0 +1,126 @@
+---
+title: "HW4"
+author: "第九組"
+date: "5/23/2019"
+output: html_document
+---
+
+```{r, echo=F, message=F}
+library(dplyr)
+library(ggplot2)
+library(gutenbergr)
+library(igraph)
+library(stringr)
+library(tidytext)
+library(tm)
+library(topicmodels)
+load(file = "sanGuo_char.RData")
+
+Sys.setlocale(category = "LC_ALL", locale = "zh_TW.UTF-8")
+```
+
+將文本以章節做合併
+```{r}
+# 從古騰堡下載三國演義的文本
+sanGuo_text <- gutenberg_download(23950) %>%
+  filter(text!="") %>%
+  distinct(gutenberg_id, text)
+
+# 用章節標題切成 120 回
+sanGuo_text <- sanGuo_text %>% 
+  mutate(chapter = cumsum(str_detect(text, regex("第.*回："))))
+
+# 把同一回的內容合併
+sanGuo_text <- sanGuo_text %>%
+  group_by(chapter) %>% 
+  summarize(
+    text = paste0(text, collapse = "")
+  )
+```
+
+去除出現次數過少的人物
+```{r}
+# 計算每個人物每章節出現的次數
+char_count <- sapply(sanGuo_char, function(pat) {
+  str_count(string = sanGuo_text$text, pattern = pat)
+})
+
+# 每個人物的總出現次數
+char_count <- colSums(char_count)
+mean(char_count)
+# 去除出現次數過少的人物
+sanGuo_char <- sanGuo_char[char_count >= 15]
+# 同名同姓的人物只能當作同一人
+sanGuo_char <- unique(sanGuo_char)
+
+# 移除複姓
+sanGuo_char <- sanGuo_char[-c(91, 117, 127, 157, 207, 208, 217)]
+```
+
+每個章節做 co-occurence matrix
+```{r}
+cooccur_matrix <- lapply(seq(120), function(ch) {
+  ch_matrix <- sapply(sanGuo_char, function(pat) {
+    str_count(string = sanGuo_text[sanGuo_text$chapter == ch,]$text, pattern = pat)
+  })
+  ch_matrix <- ch_matrix %*% t(ch_matrix)
+  rownames(ch_matrix) <- colnames(ch_matrix)
+  return(ch_matrix)
+})
+
+cooccur_matrix <- Reduce(f = "+", x = cooccur_matrix)
+diag(cooccur_matrix) <- 0
+
+cooccur_upper_tri <- upper.tri(x = cooccur_matrix, diag = FALSE)
+cooccur_df <- reshape2::melt(cooccur_matrix)
+cooccur_upper_tri <- reshape2::melt(cooccur_upper_tri)
+cooccur_df <- cooccur_df[cooccur_upper_tri$value,]
+cooccur_df <- cooccur_df[cooccur_df$value > 0,]
+cooccur_df <- cooccur_df[order(cooccur_df$Var1),]
+rownames(cooccur_df) <- NULL
+```
+
+畫出人物之間的聯繫
+```{r}
+mean(cooccur_df$value)
+charNetwork <- graph_from_data_frame(d = cooccur_df[cooccur_df$value > 85,], directed = F)
+charNetwork
+plot(charNetwork)
+```
+
+LDA 分解成三個主題
+```{r}
+
+char_dtm <- slam::as.simple_triplet_matrix(cooccur_matrix)
+char_lda <- LDA(x = char_dtm, k = 3, control = list(seed = 1234))
+```
+
+畫出各個主題的前二十大人物
+```{r}
+tidy(char_lda, matrix = "beta") %>%
+  group_by(topic) %>%
+  top_n(20, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta) %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+```
+
+分成三個主題，期望能出現魏蜀吳三個陣營
+```{r}
+char_topic <- tidy(char_lda, matrix = "beta") %>%
+  group_by(term) %>%
+  top_n(1, beta)
+char_topic <- char_topic[, c(2, 1, 3)]
+
+topicNetwork <- graph_from_data_frame(d = cooccur_df, v = char_topic, directed = F)
+labels <- degree(topicNetwork)
+V(topicNetwork)$label <- names(labels)
+V(topicNetwork)$color[V(topicNetwork)$topic == "1"] <- "palevioletred"
+V(topicNetwork)$color[V(topicNetwork)$topic == "2"] <- "gold"
+V(topicNetwork)$color[V(topicNetwork)$topic == "3"] <- "lightgreen"
+plot(topicNetwork)
+```
